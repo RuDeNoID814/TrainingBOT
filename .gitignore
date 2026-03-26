@@ -1,0 +1,23 @@
+# Virtual environment
+.venv/
+
+# IDE
+.idea/
+
+# Environment variables (secrets)
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# SQLite database
+*.db
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/
