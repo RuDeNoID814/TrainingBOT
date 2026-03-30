@@ -2,10 +2,14 @@ import os
 import sqlite3
 from datetime import date, timedelta, datetime, timezone
 
-# Persistent storage: /app/shared сохраняется между редеплоями на Bothost
-_SHARED = "/app/shared"
-if os.path.isdir(_SHARED):
-    DB_PATH = os.path.join(_SHARED, "bot.db")
+# Persistent storage: ищем директорию, которая переживает редеплой
+_PERSISTENT = None
+for _dir in ("/app/shared", "/app/data", "/data"):
+    if os.path.isdir(_dir):
+        _PERSISTENT = _dir
+        break
+if _PERSISTENT:
+    DB_PATH = os.path.join(_PERSISTENT, "bot.db")
 else:
     DB_PATH = os.getenv("DB_PATH", "bot.db")
 
