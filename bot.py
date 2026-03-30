@@ -4,7 +4,7 @@ import traceback
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
-from telegram.error import NetworkError, BadRequest, Conflict
+from telegram.error import NetworkError, BadRequest
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -53,21 +53,22 @@ def main():
     app = builder.build()
 
     async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+        err_str = str(context.error)
+
+        # Conflict — два инстанса бота, тихо игнорируем
+        if "Conflict" in type(context.error).__name__ or "terminated by other getUpdates" in err_str:
+            return
+
         # Игнорируем "Message is not modified" (двойной клик на кнопку)
         if isinstance(context.error, BadRequest):
-            if "Message is not modified" in str(context.error):
+            if "Message is not modified" in err_str:
                 return
-            if "Query is too old" in str(context.error):
+            if "Query is too old" in err_str:
                 return
-
-        # Conflict — два инстанса бота, просто логируем (не спамим админу)
-        if isinstance(context.error, Conflict):
-            logger.warning("Conflict: другой инстанс бота запущен")
-            return
 
         # Сетевые ошибки — только логируем
         if isinstance(context.error, NetworkError):
-            logger.warning("Сетевая ошибка (прокси/интернет): %s", context.error)
+            logger.warning("Сетевая ошибка: %s", context.error)
             return
 
         logger.error("Необработанная ошибка: %s", context.error, exc_info=context.error)
