@@ -46,6 +46,12 @@
 - [ ] XP-система (опыт за тесты, daily, production)
 
 ## Технические
+- [x] SQLite WAL mode + busy_timeout (конкурентный доступ)
+- [x] Timeout + ConnectError обработка для Gemini
+- [x] "Message not modified" обработка (двойной клик)
+- [x] Длинные сообщения — обрезка до 4096 символов
+- [x] Admin-уведомления об ошибках в Telegram
+- [x] requirements.txt + Procfile для деплоя
 - [ ] Деплой на хостинг (Render / Railway)
-- [ ] Переключение на gemini-2.5-pro на хостинге
+- [ ] Persistent storage для SQLite на хостинге
 - [ ] Graceful shutdown

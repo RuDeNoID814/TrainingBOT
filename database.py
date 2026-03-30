@@ -8,7 +8,10 @@ MSK = timezone(timedelta(hours=3))
 
 
 def _connect():
-    return sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    return conn
 
 
 def _today_msk() -> date:

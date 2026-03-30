@@ -42,6 +42,20 @@ def _is_new_day_streak(context) -> bool:
 
 logger = logging.getLogger(__name__)
 
+MAX_TG_MSG = 4096  # Лимит Telegram на длину сообщения
+
+
+async def _safe_edit(query, text: str, reply_markup=None, parse_mode="HTML"):
+    """edit_message_text с защитой от слишком длинного текста."""
+    if len(text) <= MAX_TG_MSG:
+        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+        return
+
+    # Обрезаем текст до лимита, оставляя место для "..."
+    cut = text[:MAX_TG_MSG - 50] + "\n\n<i>... (обрезано)</i>"
+    await query.edit_message_text(cut, reply_markup=reply_markup, parse_mode=parse_mode)
+
+
 QUESTIONS_PER_SESSION = 10
 RANDOM_QUESTIONS = 12  # Рандом — ровно 12 вопросов, по одному на каждое время
 
@@ -560,7 +574,7 @@ async def show_profile(query, context):
         [InlineKeyboardButton("🏆 Рейтинг", callback_data="leaderboard")],
         [InlineKeyboardButton("⬅️ В меню", callback_data="main_menu")],
     ]
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    await _safe_edit(query, text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 # ── Рейтинг ──────────────────────────────────────────

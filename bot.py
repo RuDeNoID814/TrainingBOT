@@ -1,11 +1,12 @@
 import logging
 import os
+import traceback
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
-from telegram.error import NetworkError
+from telegram.error import NetworkError, BadRequest
 
-from config import TELEGRAM_TOKEN
+from config import TELEGRAM_TOKEN, ADMIN_ID
 from database import init_db
 from handlers import start, button_handler, handle_user_sentence
 
@@ -43,10 +44,39 @@ def main():
     app = builder.build()
 
     async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+        # Игнорируем "Message is not modified" (двойной клик на кнопку)
+        if isinstance(context.error, BadRequest):
+            if "Message is not modified" in str(context.error):
+                return
+            if "Query is too old" in str(context.error):
+                return
+
+        # Сетевые ошибки — только логируем
         if isinstance(context.error, NetworkError):
             logger.warning("Сетевая ошибка (прокси/интернет): %s", context.error)
             return
+
         logger.error("Необработанная ошибка: %s", context.error, exc_info=context.error)
+
+        # Отправляем ошибку админу в Telegram
+        if ADMIN_ID:
+            try:
+                tb = traceback.format_exception(type(context.error), context.error, context.error.__traceback__)
+                tb_text = "".join(tb)[-3000:]  # Последние 3000 символов трейсбека
+
+                user_info = ""
+                if isinstance(update, Update) and update.effective_user:
+                    u = update.effective_user
+                    user_info = f"User: {u.id} (@{u.username or u.first_name})\n"
+
+                msg = (
+                    f"⚠️ <b>Ошибка в боте</b>\n\n"
+                    f"{user_info}"
+                    f"<pre>{tb_text[:3500]}</pre>"
+                )
+                await context.bot.send_message(ADMIN_ID, msg[:4096], parse_mode="HTML")
+            except Exception:
+                logger.error("Не удалось отправить ошибку админу")
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))

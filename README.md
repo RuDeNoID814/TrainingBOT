@@ -27,13 +27,15 @@ Telegram-бот для изучения английских времён с п�
 - Шпаргалка + 85 неправильных глаголов (4 группы: ABC, ABB, ABA, AAA)
 
 ### Надёжность
-- 5 моделей Gemini с автоматическим fallback при лимитах
+- 5 моделей Gemini с автоматическим fallback при лимитах (429/503)
 - Кэш всех вопросов в БД — работает даже при недоступности API
-- Обработка сетевых ошибок и прокси
+- Уведомления об ошибках прямо в Telegram (ADMIN_ID)
+- SQLite WAL mode для конкурентного доступа
+- Обработка timeout, сетевых ошибок, двойных кликов
 
 ## Стек
 
-- Python 3.12+
+- Python 3.12+ (разработка на 3.14)
 - python-telegram-bot v22
 - Google Gemini API (google-genai)
 - SQLite
@@ -55,19 +57,30 @@ pip install -r requirements.txt
 ```env
 TELEGRAM_TOKEN=your_telegram_bot_token
 GEMINI_API_KEY=your_gemini_api_key
+ADMIN_ID=123456789
 ```
 
-Для работы через прокси (опционально):
+`ADMIN_ID` — Telegram user_id администратора. Бот будет отправлять сюда уведомления об ошибках.
+
+Для работы через прокси (опционально, только локальная разработка):
 
 ```env
 HTTPS_PROXY=http://127.0.0.1:12334
 ```
 
-## Запуск
+## Запуск (локально)
 
 ```bash
 python bot.py
 ```
+
+## Деплой (Render / Railway)
+
+1. Запуши репо на GitHub
+2. Подключи репо к Render (Background Worker) или Railway
+3. Укажи переменные окружения: `TELEGRAM_TOKEN`, `GEMINI_API_KEY`, `ADMIN_ID`
+4. Прокси на хостинге **не нужен** — Telegram и Google API доступны напрямую
+5. Каждый `git push` в `main` = автоматический редеплой
 
 ## Структура проекта
 

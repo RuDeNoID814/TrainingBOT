@@ -21,3 +21,10 @@ Thumbs.db
 
 # Claude Code
 .claude/
+
+# Logs
+*.log
+
+# SQLite WAL/SHM
+*.db-wal
+*.db-shm

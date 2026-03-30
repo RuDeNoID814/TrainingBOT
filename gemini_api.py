@@ -174,6 +174,12 @@ def _generate(prompt: str, system: str = None, schema: types.Schema = None) -> s
             )
             logger.info("Gemini OK: %s", model)
             return response.text
+        except httpx.TimeoutException:
+            logger.warning("Модель %s: timeout, пробую следующую", model)
+            continue
+        except httpx.ConnectError:
+            logger.warning("Модель %s: ошибка подключения (прокси?), пробую следующую", model)
+            continue
         except Exception as e:
             err_str = str(e)
             if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
