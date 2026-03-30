@@ -84,7 +84,18 @@ def main():
             except Exception:
                 logger.error("Не удалось отправить ошибку админу")
 
+    # Админ-команда: скачать БД
+    async def download_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.effective_user.id != ADMIN_ID:
+            return
+        from database import DB_PATH
+        if os.path.exists(DB_PATH):
+            await update.message.reply_document(document=open(DB_PATH, "rb"), filename="bot.db")
+        else:
+            await update.message.reply_text("БД не найдена")
+
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("db", download_db))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_sentence))
     app.add_error_handler(error_handler)
