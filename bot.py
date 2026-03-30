@@ -4,7 +4,7 @@ import traceback
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
-from telegram.error import NetworkError, BadRequest
+from telegram.error import NetworkError, BadRequest, Conflict
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -59,6 +59,11 @@ def main():
                 return
             if "Query is too old" in str(context.error):
                 return
+
+        # Conflict — два инстанса бота, просто логируем (не спамим админу)
+        if isinstance(context.error, Conflict):
+            logger.warning("Conflict: другой инстанс бота запущен")
+            return
 
         # Сетевые ошибки — только логируем
         if isinstance(context.error, NetworkError):
