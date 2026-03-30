@@ -58,6 +58,7 @@ async def _safe_edit(query, text: str, reply_markup=None, parse_mode="HTML"):
 
 QUESTIONS_PER_SESSION = 10
 RANDOM_QUESTIONS = 12  # Рандом — ровно 12 вопросов, по одному на каждое время
+QUICK_QUESTIONS = 5    # Быстрая тренировка — 5 вопросов
 
 # Названия времён для выделения жирным в объяснениях
 _TENSE_NAMES = [t["name"] for t in TENSES.values()]
@@ -74,29 +75,47 @@ def _bold_tense_in_explanation(text: str) -> str:
 
 # ── /start ──────────────────────────────────────────────
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+def _build_menu_text_and_keyboard(user_id: int, name: str = "") -> tuple[str, list]:
+    """Формирует текст и клавиатуру главного меню с контекстом пользователя."""
     current, best = get_streak(user_id)
-    streak_line = f"🔥 Streak: {current} дн." if current > 0 else ""
+    leitner = get_leitner_progress(user_id)
+    due = get_due_tenses(user_id)
+
+    # Шапка
+    greeting = f"Привет, {name}!" if name else "Привет!"
+    lines = [greeting]
+
+    if current > 0:
+        lines.append(f"🔥 Streak: {current} дн.")
+
+    # Прогресс обучения
+    if leitner:
+        mastered = sum(1 for v in leitner.values() if v["box"] == 5)
+        studied = len(leitner)
+        lines.append(f"📊 Изучено: {studied}/12 | ✅ Выучено: {mastered}")
+    if due:
+        lines.append(f"🔔 Пора повторить: {len(due)}")
+
+    lines.append("\nВыбери, что хочешь сделать:")
+    text = "\n".join(lines)
 
     keyboard = [
-        [InlineKeyboardButton("👤 Профиль", callback_data="profile"),
-         InlineKeyboardButton("🏆 Рейтинг", callback_data="leaderboard")],
-        [InlineKeyboardButton("📚 Практика", callback_data="practice"),
-         InlineKeyboardButton("📅 Daily", callback_data="daily")],
-        [InlineKeyboardButton("🎓 Обучение", callback_data="learn_menu")],
-        [InlineKeyboardButton("✍️ Написать предложение", callback_data="production_menu")],
+        [InlineKeyboardButton("⚡ Быстрая тренировка", callback_data="quick")],
+        [InlineKeyboardButton("📅 Daily", callback_data="daily"),
+         InlineKeyboardButton("📚 Практика", callback_data="practice")],
+        [InlineKeyboardButton("🎓 Обучение", callback_data="learn_menu"),
+         InlineKeyboardButton("👤 Профиль", callback_data="profile")],
         [InlineKeyboardButton("📋 Шпаргалка", callback_data="cheatsheet"),
          InlineKeyboardButton("ℹ️ Инфо", callback_data="info")],
     ]
 
-    text = (
-        "Привет! Я — Tense Trainer Bot.\n\n"
-        "Помогу тебе выучить все 12 английских времён!\n"
-        f"{streak_line}\n\n"
-        "Выбери, что хочешь сделать:"
-    )
+    return text, keyboard
 
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    name = update.effective_user.first_name or ""
+    text, keyboard = _build_menu_text_and_keyboard(user_id, name)
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
@@ -104,24 +123,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_main_menu(query, context):
     user_id = query.from_user.id
-    current, best = get_streak(user_id)
-    streak_line = f"🔥 Streak: {current} дн." if current > 0 else ""
-
-    keyboard = [
-        [InlineKeyboardButton("👤 Профиль", callback_data="profile"),
-         InlineKeyboardButton("🏆 Рейтинг", callback_data="leaderboard")],
-        [InlineKeyboardButton("📚 Практика", callback_data="practice"),
-         InlineKeyboardButton("📅 Daily", callback_data="daily")],
-        [InlineKeyboardButton("🎓 Обучение", callback_data="learn_menu")],
-        [InlineKeyboardButton("✍️ Написать предложение", callback_data="production_menu")],
-        [InlineKeyboardButton("📋 Шпаргалка", callback_data="cheatsheet"),
-         InlineKeyboardButton("ℹ️ Инфо", callback_data="info")],
-    ]
-
-    await query.edit_message_text(
-        f"Главное меню\n{streak_line}\n\nВыбери, что хочешь сделать:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
+    name = query.from_user.first_name or ""
+    text, keyboard = _build_menu_text_and_keyboard(user_id, name)
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 # ── Выбор группы времён ────────────────────────────────
@@ -131,10 +135,11 @@ async def show_groups(query, context):
         [InlineKeyboardButton("📖 Времена", callback_data="tenses_menu")],
         [InlineKeyboardButton("🎲 Рандом — все 12 форм", callback_data="random_info")],
         [InlineKeyboardButton("🔍 Найди ошибку", callback_data="find_error_menu")],
+        [InlineKeyboardButton("✍️ Написать предложение", callback_data="production_menu")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="main_menu")],
     ]
     await query.edit_message_text(
-        "Выбери режим практики:",
+        "📚 Выбери режим практики:",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
@@ -235,10 +240,33 @@ async def start_random_quiz(query, context):
     await send_question(query, context)
 
 
+async def start_quick_training(query, context):
+    """Быстрая тренировка — 5 случайных вопросов из разных времён."""
+    all_tenses = list(TENSES.keys())
+    random.shuffle(all_tenses)
+    context.user_data["current_tense"] = "quick"
+    context.user_data["random_tense_order"] = all_tenses[:QUICK_QUESTIONS]
+    context.user_data["score"] = 0
+    context.user_data["question_num"] = 0
+    context.user_data["question_tenses"] = []
+    context.user_data["question_correct"] = []
+    await send_question(query, context)
+
+
+def _get_total_questions(context) -> int:
+    """Определяет количество вопросов по типу текущего квиза."""
+    mode = context.user_data.get("current_tense", "")
+    if mode == "random":
+        return RANDOM_QUESTIONS
+    elif mode == "quick":
+        return QUICK_QUESTIONS
+    return QUESTIONS_PER_SESSION
+
+
 async def send_question(query, context):
     q_num = context.user_data["question_num"]
-    is_random = context.user_data["current_tense"] == "random"
-    total_questions = RANDOM_QUESTIONS if is_random else QUESTIONS_PER_SESSION
+    is_random = context.user_data["current_tense"] in ("random", "quick")
+    total_questions = _get_total_questions(context)
 
     if q_num >= total_questions:
         await show_results(query, context)
@@ -297,8 +325,7 @@ async def handle_answer(query, context, answer_index: int):
     context.user_data["question_num"] += 1
 
     q_num = context.user_data["question_num"]
-    is_random = context.user_data.get("current_tense") == "random"
-    total_questions = RANDOM_QUESTIONS if is_random else QUESTIONS_PER_SESSION
+    total_questions = _get_total_questions(context)
     is_last = q_num >= total_questions
 
     explanation_fmt = _bold_tense_in_explanation(explanation)
@@ -329,8 +356,7 @@ async def handle_answer(query, context, answer_index: int):
 
 async def show_results(query, context):
     score = context.user_data.get("score", 0)
-    is_random = context.user_data.get("current_tense") == "random"
-    total_q = RANDOM_QUESTIONS if is_random else QUESTIONS_PER_SESSION
+    total_q = _get_total_questions(context)
     answered = context.user_data.get("question_num", total_q)
     user_id = query.from_user.id
     username = query.from_user.username or query.from_user.first_name or ""
@@ -391,8 +417,7 @@ async def show_results(query, context):
 async def confirm_finish(query, context):
     score = context.user_data.get("score", 0)
     q_num = context.user_data.get("question_num", 0)
-    is_random = context.user_data.get("current_tense") == "random"
-    total_questions = RANDOM_QUESTIONS if is_random else QUESTIONS_PER_SESSION
+    total_questions = _get_total_questions(context)
 
     text = (
         f"Ты ответил на {q_num} из {total_questions} вопросов.\n"
@@ -433,7 +458,7 @@ async def show_production_menu(query, context):
             short_name = TENSES[t_key]["name"].replace(" Perfect Continuous", " PC").replace(" Continuous", " Cont.").replace(" Perfect", " Perf.")
             row.append(InlineKeyboardButton(short_name, callback_data=f"prod_{t_key}"))
         keyboard.append(row)
-    keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="main_menu")])
+    keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="practice")])
 
     await query.edit_message_text(
         "✍️ Выбери время, в котором хочешь написать предложение:",
@@ -524,51 +549,56 @@ async def show_profile(query, context):
 
     total_pct = round(stats["total_correct"] / stats["total_questions"] * 100) if stats["total_questions"] > 0 else 0
 
-    # Уровень
+    # Ранг
     if stats["total_quizzes"] == 0:
-        level = "🌱 Новичок"
+        rank = "🌱 Новичок"
     elif total_pct < 50:
-        level = "📗 Начинающий"
+        rank = "📗 Начинающий"
     elif total_pct < 75:
-        level = "📘 Средний"
+        rank = "📘 Средний"
     elif total_pct < 90:
-        level = "📙 Продвинутый"
+        rank = "📙 Продвинутый"
     else:
-        level = "📕 Мастер"
+        rank = "📕 Мастер"
 
-    text = (
-        f"👤 <b>{name}</b>\n"
-        f"{level}\n\n"
-        f"🔥 Streak: {stats['current_streak']} дн. (лучший: {stats['best_streak']})\n"
-        f"📝 Вопросов отвечено: {stats['total_questions']}\n"
-        f"✅ Правильных: {stats['total_correct']}/{stats['total_questions']}"
-    )
+    text = f"👤 <b>{name}</b>  {rank}\n\n"
+
+    # Основная статистика — компактно
+    text += f"🔥 Streak: {stats['current_streak']} дн. (лучший: {stats['best_streak']})\n"
     if stats["total_questions"] > 0:
-        text += f" ({total_pct}%)"
+        text += f"📝 Тесты: {stats['total_correct']}/{stats['total_questions']} ({total_pct}%)\n"
+    else:
+        text += "📝 Тестов пока нет\n"
 
     if stats["prod_total"] > 0:
         prod_pct = round(stats["prod_correct"] / stats["prod_total"] * 100)
-        text += f"\n✍️ Предложений: {stats['prod_correct']}/{stats['prod_total']} ({prod_pct}%)"
+        text += f"✍️ Предложения: {stats['prod_correct']}/{stats['prod_total']} ({prod_pct}%)\n"
 
     # Прогресс обучения (Лейтнер)
     leitner = get_leitner_progress(user_id)
     if leitner:
         mastered = sum(1 for v in leitner.values() if v["box"] == 5)
-        total_studied = len(leitner)
-        text += f"\n\n🎓 <b>Обучение:</b> {mastered}/12 выучено"
+        text += f"\n🎓 <b>Обучение:</b> {len(leitner)}/12 изучается, {mastered} выучено"
         if mastered == 12:
             text += "\n🏆 Все 12 времён выучены!"
         elif mastered > 0:
             mastered_names = [TENSES[k]["name"] for k, v in leitner.items() if v["box"] == 5]
             text += "\n✅ " + ", ".join(mastered_names)
 
-    # Статистика по временам
+    # Статистика по временам — по группам
     if stats["tense_stats"]:
-        text += "\n\n📊 <b>По временам:</b>"
-        for t_key, ts in stats["tense_stats"].items():
-            tense_name = TENSES.get(t_key, {}).get("name", t_key)
-            bar = "🟩" if ts["pct"] >= 70 else "🟨" if ts["pct"] >= 40 else "🟥"
-            text += f"\n{bar} {tense_name}: {ts['pct']}% ({ts['correct']}/{ts['total']})"
+        text += "\n\n📊 <b>Результаты по временам:</b>"
+        for group_label, tense_keys in TENSE_GROUPS.items():
+            group_title = {"present": "Present", "past": "Past", "future": "Future"}.get(group_label, group_label)
+            group_lines = []
+            for t_key in tense_keys:
+                if t_key in stats["tense_stats"]:
+                    ts = stats["tense_stats"][t_key]
+                    tense_name = TENSES[t_key]["name"]
+                    bar = "🟩" if ts["pct"] >= 70 else "🟨" if ts["pct"] >= 40 else "🟥"
+                    group_lines.append(f"  {bar} {tense_name}: {ts['pct']}%")
+            if group_lines:
+                text += f"\n<b>{group_title}:</b>\n" + "\n".join(group_lines)
 
     keyboard = [
         [InlineKeyboardButton("🏆 Рейтинг", callback_data="leaderboard")],
@@ -1469,6 +1499,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "main_menu":
         await show_main_menu(query, context)
 
+    elif data == "quick":
+        await start_quick_training(query, context)
+
     elif data == "practice":
         await show_groups(query, context)
 
@@ -1521,7 +1554,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "try_again":
         tense_key = context.user_data.get("current_tense", "random")
-        await start_quiz(query, context, tense_key)
+        if tense_key == "quick":
+            await start_quick_training(query, context)
+        elif tense_key == "random":
+            await start_random_quiz(query, context)
+        else:
+            await start_quiz(query, context, tense_key)
 
     elif data == "profile":
         await show_profile(query, context)

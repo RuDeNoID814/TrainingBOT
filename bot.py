@@ -126,10 +126,6 @@ def main():
     app.run_polling(
         drop_pending_updates=True,
         allowed_updates=["message", "callback_query"],
-        pool_timeout=10,
-        read_timeout=15,
-        connect_timeout=15,
-        write_timeout=15,
     )
 
 
