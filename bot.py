@@ -1,11 +1,13 @@
-import loggingа
+import logging
 import os
 
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler
+from telegram import Update
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
+from telegram.error import NetworkError
 
 from config import TELEGRAM_TOKEN
 from database import init_db
-from handlers import start, button_handler
+from handlers import start, button_handler, handle_user_sentence
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -40,11 +42,22 @@ def main():
 
     app = builder.build()
 
+    async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+        if isinstance(context.error, NetworkError):
+            logger.warning("Сетевая ошибка (прокси/интернет): %s", context.error)
+            return
+        logger.error("Необработанная ошибка: %s", context.error, exc_info=context.error)
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_sentence))
+    app.add_error_handler(error_handler)
 
     logger.info("Бот запущен!")
-    app.run_polling()
+    app.run_polling(
+        drop_pending_updates=True,
+        allowed_updates=["message", "callback_query"],
+    )
 
 
 if __name__ == "__main__":

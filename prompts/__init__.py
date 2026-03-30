@@ -1,1 +1,3 @@
 from prompts.quiz_prompt import get_quiz_prompt
+from prompts.check_sentence_prompt import get_check_sentence_prompt
+from prompts.find_error_prompt import get_find_error_prompt
