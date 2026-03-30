@@ -215,10 +215,17 @@ def _generate(prompt: str, system: str = None, schema: types.Schema = None) -> s
                     if "503" in err2 or "UNAVAILABLE" in err2:
                         logger.warning("Модель %s: 503 перегружена", model)
                         continue
+                    if "FAILED_PRECONDITION" in err2 or "location" in err2.lower():
+                        logger.warning("Модель %s: геоблокировка (без schema), пробую следующую", model)
+                        continue
                     logger.error("Gemini API error (%s): %s", model, e2)
-                    return None
+                    continue
+            # Геоблокировка или другая ошибка — пробуем следующую модель
+            if "FAILED_PRECONDITION" in err_str or "location" in err_str.lower():
+                logger.warning("Модель %s: геоблокировка, пробую следующую", model)
+                continue
             logger.error("Gemini API error (%s): %s", model, e)
-            return None
+            continue  # Пробуем следующую модель вместо return None
 
     logger.error("Все модели исчерпаны или на кулдауне")
     return None
