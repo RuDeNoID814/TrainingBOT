@@ -1,7 +1,13 @@
+import os
 import sqlite3
 from datetime import date, timedelta, datetime, timezone
 
-DB_PATH = "bot.db"
+# Persistent storage: /app/shared сохраняется между редеплоями на Bothost
+_SHARED = "/app/shared"
+if os.path.isdir(_SHARED):
+    DB_PATH = os.path.join(_SHARED, "bot.db")
+else:
+    DB_PATH = os.getenv("DB_PATH", "bot.db")
 
 # Московское время (UTC+3), учебный день начинается в 7:00
 MSK = timezone(timedelta(hours=3))

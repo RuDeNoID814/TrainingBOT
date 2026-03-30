@@ -28,6 +28,8 @@ def main():
         return
 
     init_db()
+    from database import DB_PATH as _db_path
+    logger.info("БД: %s (exists=%s)", os.path.abspath(_db_path), os.path.exists(_db_path))
 
     # Прокси подхватывается из окружения (Hiddify и т.д.)
     # На хостинге переменных нет → прокси не используется
@@ -36,9 +38,10 @@ def main():
     builder = (
         Application.builder()
         .token(TELEGRAM_TOKEN)
-        .connect_timeout(30)
-        .read_timeout(30)
-        .write_timeout(30)
+        .connect_timeout(15)
+        .read_timeout(15)
+        .write_timeout(15)
+        .pool_timeout(10)
     )
 
     if proxy_url:
@@ -94,8 +97,27 @@ def main():
         else:
             await update.message.reply_text("БД не найдена")
 
+    # Админ-команда: сбросить БД
+    async def reset_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.effective_user.id != ADMIN_ID:
+            return
+        from database import DB_PATH
+        if os.path.exists(DB_PATH):
+            os.remove(DB_PATH)
+            # Удаляем WAL/SHM файлы если есть
+            for ext in ("-wal", "-shm"):
+                p = DB_PATH + ext
+                if os.path.exists(p):
+                    os.remove(p)
+            init_db()
+            await update.message.reply_text("🗑 БД очищена и пересоздана.")
+        else:
+            init_db()
+            await update.message.reply_text("БД не существовала, создана новая.")
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("db", download_db))
+    app.add_handler(CommandHandler("reset_db", reset_db))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_sentence))
     app.add_error_handler(error_handler)
@@ -104,6 +126,10 @@ def main():
     app.run_polling(
         drop_pending_updates=True,
         allowed_updates=["message", "callback_query"],
+        pool_timeout=10,
+        read_timeout=15,
+        connect_timeout=15,
+        write_timeout=15,
     )
 
 
