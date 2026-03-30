@@ -4,7 +4,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_TOKEN = (
+    os.getenv("TELEGRAM_TOKEN")
+    or os.getenv("BOT_TOKEN")
+    or os.getenv("TELEGRAM_BOT_TOKEN")
+    or os.getenv("TOKEN")
+)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # ID администратора для получения уведомлений об ошибках

@@ -6,12 +6,12 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 from telegram.error import NetworkError, BadRequest
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from config import TELEGRAM_TOKEN, ADMIN_ID
 from database import init_db
 from handlers import start, button_handler, handle_user_sentence
-
-from dotenv import load_dotenv
-load_dotenv()
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 
 
 def main():
+    # Диагностика переменных окружения
+    if not TELEGRAM_TOKEN:
+        logger.error("TELEGRAM_TOKEN не найден! Проверьте переменные окружения.")
+        logger.error("Доступные переменные: %s", [k for k in os.environ if 'TOKEN' in k.upper() or 'BOT' in k.upper() or 'TELEGRAM' in k.upper()])
+        return
+
     init_db()
 
     # Прокси подхватывается из окружения (Hiddify и т.д.)
