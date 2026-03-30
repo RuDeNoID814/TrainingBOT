@@ -82,8 +82,12 @@ def _build_menu_text_and_keyboard(user_id: int, name: str = "") -> tuple[str, li
     due = get_due_tenses(user_id)
 
     # Шапка
-    greeting = f"Привет, {name}!" if name else "Привет!"
-    lines = [greeting]
+    lines = []
+    if name:
+        lines.append(f"Привет, {name}! Я — <b>Tense Trainer Bot</b>.")
+    else:
+        lines.append("Привет! Я — <b>Tense Trainer Bot</b>.")
+    lines.append("Помогу выучить все 12 английских времён!\n")
 
     if current > 0:
         lines.append(f"🔥 Streak: {current} дн.")
@@ -96,15 +100,14 @@ def _build_menu_text_and_keyboard(user_id: int, name: str = "") -> tuple[str, li
     if due:
         lines.append(f"🔔 Пора повторить: {len(due)}")
 
-    lines.append("\nВыбери, что хочешь сделать:")
     text = "\n".join(lines)
 
     keyboard = [
+        [InlineKeyboardButton("👤 Профиль", callback_data="profile"),
+         InlineKeyboardButton("📅 Daily", callback_data="daily")],
         [InlineKeyboardButton("⚡ Быстрая тренировка", callback_data="quick")],
-        [InlineKeyboardButton("📅 Daily", callback_data="daily"),
-         InlineKeyboardButton("📚 Практика", callback_data="practice")],
-        [InlineKeyboardButton("🎓 Обучение", callback_data="learn_menu"),
-         InlineKeyboardButton("👤 Профиль", callback_data="profile")],
+        [InlineKeyboardButton("📚 Практика", callback_data="practice"),
+         InlineKeyboardButton("🎓 Обучение", callback_data="learn_menu")],
         [InlineKeyboardButton("📋 Шпаргалка", callback_data="cheatsheet"),
          InlineKeyboardButton("ℹ️ Инфо", callback_data="info")],
     ]
@@ -116,7 +119,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     name = update.effective_user.first_name or ""
     text, keyboard = _build_menu_text_and_keyboard(user_id, name)
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
 
 
 # ── Главное меню ────────────────────────────────────────
@@ -125,7 +128,7 @@ async def show_main_menu(query, context):
     user_id = query.from_user.id
     name = query.from_user.first_name or ""
     text, keyboard = _build_menu_text_and_keyboard(user_id, name)
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
 
 
 # ── Выбор группы времён ────────────────────────────────
@@ -960,6 +963,22 @@ async def handle_daily_answer(query, context, answer_index: int):
     tense_key = context.user_data.get("daily_tense", "present_simple")
     user_id = query.from_user.id
     username = query.from_user.username or query.from_user.first_name or ""
+
+    # Если контекст потерян (перезапуск/conflict) — восстанавливаем из БД
+    if not options or not daily_id:
+        daily = get_today_daily()
+        if daily:
+            daily_id = daily["daily_id"]
+            correct = daily["correct"]
+            explanation = daily.get("explanation_ru", "")
+            tense_key = daily["tense_key"]
+            options = daily["options"][:]
+        else:
+            await query.edit_message_text(
+                "😔 Вопрос дня не найден. Попробуй ещё раз.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 В меню", callback_data="main_menu")]]),
+            )
+            return
 
     if answer_index >= len(options):
         return

@@ -29,7 +29,8 @@ def main():
 
     init_db()
     from database import DB_PATH as _db_path
-    logger.info("БД: %s (exists=%s)", os.path.abspath(_db_path), os.path.exists(_db_path))
+    shared_exists = os.path.isdir("/app/shared")
+    logger.info("БД: %s (exists=%s, /app/shared=%s)", os.path.abspath(_db_path), os.path.exists(_db_path), shared_exists)
 
     # Прокси подхватывается из окружения (Hiddify и т.д.)
     # На хостинге переменных нет → прокси не используется
