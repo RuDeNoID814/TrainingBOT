@@ -10,7 +10,8 @@ TELEGRAM_TOKEN = (
     or os.getenv("TELEGRAM_BOT_TOKEN")
     or os.getenv("TOKEN")
 )
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 
 # ID администратора для получения уведомлений об ошибках
 _admin = os.getenv("ADMIN_ID", "")

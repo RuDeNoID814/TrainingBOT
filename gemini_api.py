@@ -9,37 +9,22 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from google import genai
-from google.genai import types
-from google.genai.types import HttpOptions
-
-from config import GEMINI_API_KEY
 from tenses import TENSES
 from prompts import get_quiz_prompt, get_check_sentence_prompt, get_find_error_prompt
 from database import save_question_to_cache, get_cached_question, mark_question_seen, get_recent_sentences
 
 logger = logging.getLogger(__name__)
 
-# ── Клиент Gemini ────────────────────────────────────
-_proxy_url = os.getenv("HTTPS_PROXY") or os.getenv("https_proxy")
-if _proxy_url:
-    print(f"[Gemini] Прокси: {_proxy_url}")
-    _http_client = httpx.Client(proxy=_proxy_url)
-    client = genai.Client(
-        api_key=GEMINI_API_KEY,
-        http_options=HttpOptions(httpxClient=_http_client),
-    )
-else:
-    print("[Gemini] Прямое подключение (без прокси)")
-    client = genai.Client(api_key=GEMINI_API_KEY)
+# ── OpenRouter API ────────────────────────────────────
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# ── Модели (fallback по убыванию лимитов) ────────────
+# Бесплатные и дешёвые модели на OpenRouter (fallback)
 MODELS = [
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-flash",
-    "gemini-2.5-pro",
-    "gemini-3.1-flash-lite-preview",
-    "gemini-3-flash-preview",
+    "google/gemini-2.0-flash-001",
+    "google/gemini-2.5-flash-preview",
+    "google/gemini-2.0-flash-lite-001",
+    "google/gemini-flash-1.5-8b",
 ]
 
 COOLDOWN_SEC = 60 * 60  # 1 час блокировки после 429
@@ -48,7 +33,7 @@ _blocked_until: dict[str, float] = {}
 # ── System instructions ──────────────────────────────
 QUIZ_SYSTEM = (
     "You are an expert English grammar teacher creating quiz questions for Russian-speaking students. "
-    "You always respond with valid JSON only. "
+    "You always respond with valid JSON only, no markdown, no code blocks. "
     "You create diverse, creative questions using varied vocabulary, subjects, and real-life contexts. "
     "Each question tests a specific English tense with one correct answer and three plausible distractors from other tenses. "
     "Explanations are always in Russian, short and clear."
@@ -56,86 +41,39 @@ QUIZ_SYSTEM = (
 
 CHECK_SYSTEM = (
     "You are a friendly English grammar teacher checking sentences written by Russian-speaking students. "
-    "You always respond with valid JSON only. "
+    "You always respond with valid JSON only, no markdown, no code blocks. "
     "You give encouraging feedback in Russian. "
     "You check both grammatical correctness and whether the correct tense was used."
 )
 
-# ── JSON-схемы для structured output ─────────────────
-QUIZ_SCHEMA = types.Schema(
-    type="OBJECT",
-    properties={
-        "sentence": types.Schema(
-            type="STRING",
-            description="English sentence with ___ blank and base verb in parentheses",
-        ),
-        "correct": types.Schema(
-            type="STRING",
-            description="The correct verb form for the blank",
-        ),
-        "options": types.Schema(
-            type="ARRAY",
-            items=types.Schema(type="STRING"),
-            description="Exactly 4 options: 1 correct + 3 plausible distractors from other tenses",
-        ),
-        "explanation_ru": types.Schema(
-            type="STRING",
-            description="Short explanation in Russian why this answer is correct, mentioning the tense name and time marker",
-        ),
-    },
-    required=["sentence", "correct", "options", "explanation_ru"],
-)
+# ── JSON-инструкции для промптов ─────────────────────
+QUIZ_JSON_INSTRUCTION = """
+Respond with a JSON object with these fields:
+- "sentence": English sentence with ___ blank and base verb in parentheses
+- "correct": The correct verb form for the blank
+- "options": Array of exactly 4 strings: 1 correct + 3 plausible distractors from other tenses
+- "explanation_ru": Short explanation in Russian why this answer is correct, mentioning the tense name and time marker
+"""
 
-FIND_ERROR_SCHEMA = types.Schema(
-    type="OBJECT",
-    properties={
-        "sentence": types.Schema(
-            type="STRING",
-            description="English sentence with a WRONG verb tense (the error)",
-        ),
-        "correct": types.Schema(
-            type="STRING",
-            description="The correct verb form that fixes the error",
-        ),
-        "options": types.Schema(
-            type="ARRAY",
-            items=types.Schema(type="STRING"),
-            description="Exactly 4 options: 1 correct fix + 3 wrong alternatives",
-        ),
-        "explanation_ru": types.Schema(
-            type="STRING",
-            description="Short explanation in Russian: why the original is wrong, why the correct answer fits",
-        ),
-    },
-    required=["sentence", "correct", "options", "explanation_ru"],
-)
+FIND_ERROR_JSON_INSTRUCTION = """
+Respond with a JSON object with these fields:
+- "sentence": English sentence with a WRONG verb tense (the error to find)
+- "correct": The correct verb form that fixes the error
+- "options": Array of exactly 4 strings: 1 correct fix + 3 wrong alternatives
+- "explanation_ru": Short explanation in Russian: why the original is wrong, why the correct answer fits
+"""
 
-CHECK_SCHEMA = types.Schema(
-    type="OBJECT",
-    properties={
-        "is_correct": types.Schema(
-            type="BOOLEAN",
-            description="true if the sentence correctly uses the target tense",
-        ),
-        "tense_used": types.Schema(
-            type="STRING",
-            description="The tense actually used in the student's sentence",
-        ),
-        "corrected": types.Schema(
-            type="STRING",
-            description="Corrected version of the sentence (or same if correct)",
-        ),
-        "feedback_ru": types.Schema(
-            type="STRING",
-            description="Feedback in Russian: praise if correct, gentle correction if wrong. 2-3 sentences max.",
-        ),
-    },
-    required=["is_correct", "tense_used", "corrected", "feedback_ru"],
-)
+CHECK_JSON_INSTRUCTION = """
+Respond with a JSON object with these fields:
+- "is_correct": boolean, true if the sentence correctly uses the target tense
+- "tense_used": string, the tense actually used in the student's sentence
+- "corrected": string, corrected version of the sentence (or same if correct)
+- "feedback_ru": string, feedback in Russian: praise if correct, gentle correction if wrong. 2-3 sentences max.
+"""
 
 
 def _parse_json(text: str) -> dict | None:
-    """Парсит JSON из ответа (fallback если structured output не сработал)."""
+    """Парсит JSON из ответа."""
     text = text.strip()
     match = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
     if match:
@@ -143,89 +81,84 @@ def _parse_json(text: str) -> dict | None:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        logger.error("Failed to parse Gemini JSON: %s", text[:200])
+        logger.error("Failed to parse JSON: %s", text[:200])
         return None
 
 
-def _generate(prompt: str, system: str = None, schema: types.Schema = None) -> str | None:
-    """Отправляет запрос в Gemini с system instruction и structured output."""
+def _generate(prompt: str, system: str = None, json_instruction: str = "") -> str | None:
+    """Отправляет запрос через OpenRouter API."""
     now = time.time()
 
-    config = types.GenerateContentConfig(
-        temperature=0.9,
-        top_p=0.9,
-    )
+    if not OPENROUTER_API_KEY:
+        logger.error("OPENROUTER_API_KEY не задан!")
+        return None
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    # Формируем сообщения
+    messages = []
     if system:
-        config.system_instruction = system
-    if schema:
-        config.response_mime_type = "application/json"
-        config.response_schema = schema
+        messages.append({"role": "system", "content": system})
+
+    user_content = prompt
+    if json_instruction:
+        user_content = f"{json_instruction}\n\n{prompt}"
+    messages.append({"role": "user", "content": user_content})
 
     for model in MODELS:
         if model in _blocked_until and now < _blocked_until[model]:
             logger.debug("Модель %s: на кулдауне, пропускаю", model)
             continue
 
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": 0.9,
+            "top_p": 0.9,
+        }
+
         try:
-            response = client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=config,
-            )
-            logger.info("Gemini OK: %s", model)
-            return response.text
+            with httpx.Client(timeout=30) as client:
+                response = client.post(OPENROUTER_URL, headers=headers, json=payload)
+
+            if response.status_code == 200:
+                data = response.json()
+                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                if content:
+                    logger.info("OpenRouter OK: %s", model)
+                    return content
+                logger.warning("Модель %s: пустой ответ", model)
+                continue
+
+            elif response.status_code == 429:
+                _blocked_until[model] = now + COOLDOWN_SEC
+                logger.warning("Модель %s: лимит исчерпан (429), блокирую на %d мин", model, COOLDOWN_SEC // 60)
+                continue
+
+            elif response.status_code == 503:
+                logger.warning("Модель %s: 503 перегружена, пробую следующую", model)
+                continue
+
+            else:
+                err_body = response.text[:300]
+                if "location" in err_body.lower() or "FAILED_PRECONDITION" in err_body:
+                    logger.warning("Модель %s: геоблокировка, пробую следующую", model)
+                    continue
+                logger.warning("Модель %s: HTTP %d — %s, пробую следующую", model, response.status_code, err_body[:100])
+                continue
+
         except httpx.TimeoutException:
             logger.warning("Модель %s: timeout, пробую следующую", model)
             continue
         except httpx.ConnectError:
-            logger.warning("Модель %s: ошибка подключения (прокси?), пробую следующую", model)
+            logger.warning("Модель %s: ошибка подключения, пробую следующую", model)
             continue
         except Exception as e:
-            err_str = str(e)
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                _blocked_until[model] = now + COOLDOWN_SEC
-                logger.warning("Модель %s: лимит исчерпан, блокирую на %d мин", model, COOLDOWN_SEC // 60)
-                continue
-            if "503" in err_str or "UNAVAILABLE" in err_str:
-                logger.warning("Модель %s: 503 перегружена, пробую следующую", model)
-                continue
-            # Некоторые модели могут не поддерживать response_schema — пробуем без
-            if schema and ("schema" in err_str.lower() or "mime" in err_str.lower()):
-                logger.warning("Модель %s: не поддерживает schema, пробую без", model)
-                try:
-                    fallback_config = types.GenerateContentConfig(
-                        temperature=0.9,
-                        top_p=0.9,
-                    )
-                    if system:
-                        fallback_config.system_instruction = system
-                    response = client.models.generate_content(
-                        model=model,
-                        contents=prompt,
-                        config=fallback_config,
-                    )
-                    logger.info("Gemini OK (без schema): %s", model)
-                    return response.text
-                except Exception as e2:
-                    err2 = str(e2)
-                    if "429" in err2 or "RESOURCE_EXHAUSTED" in err2:
-                        _blocked_until[model] = now + COOLDOWN_SEC
-                        logger.warning("Модель %s: лимит исчерпан", model)
-                        continue
-                    if "503" in err2 or "UNAVAILABLE" in err2:
-                        logger.warning("Модель %s: 503 перегружена", model)
-                        continue
-                    if "FAILED_PRECONDITION" in err2 or "location" in err2.lower():
-                        logger.warning("Модель %s: геоблокировка (без schema), пробую следующую", model)
-                        continue
-                    logger.error("Gemini API error (%s): %s", model, e2)
-                    continue
-            # Геоблокировка или другая ошибка — пробуем следующую модель
-            if "FAILED_PRECONDITION" in err_str or "location" in err_str.lower():
-                logger.warning("Модель %s: геоблокировка, пробую следующую", model)
-                continue
-            logger.error("Gemini API error (%s): %s", model, e)
-            continue  # Пробуем следующую модель вместо return None
+            logger.error("Модель %s: непредвиденная ошибка: %s", model, e)
+            continue
 
     logger.error("Все модели исчерпаны или на кулдауне")
     return None
@@ -237,9 +170,9 @@ def generate_question(tense_key: str, user_id: int = 0) -> dict | None:
     prompt = get_quiz_prompt(tense["name"], tense["formula"], tense["markers"], used)
 
     for attempt in range(2):
-        text = _generate(prompt, system=QUIZ_SYSTEM, schema=QUIZ_SCHEMA)
+        text = _generate(prompt, system=QUIZ_SYSTEM, json_instruction=QUIZ_JSON_INSTRUCTION)
         if text is None:
-            logger.info("Gemini недоступен, ищу вопрос в кэше для %s (user %d)", tense_key, user_id)
+            logger.info("AI недоступен, ищу вопрос в кэше для %s (user %d)", tense_key, user_id)
             cached = get_cached_question(tense_key, user_id)
             if cached:
                 logger.info("Вопрос взят из кэша")
@@ -261,9 +194,9 @@ def generate_find_error(tense_key: str, user_id: int = 0) -> dict | None:
     prompt = get_find_error_prompt(tense["name"], tense["formula"], tense["markers"], used)
 
     for attempt in range(2):
-        text = _generate(prompt, system=QUIZ_SYSTEM, schema=FIND_ERROR_SCHEMA)
+        text = _generate(prompt, system=QUIZ_SYSTEM, json_instruction=FIND_ERROR_JSON_INSTRUCTION)
         if text is None:
-            logger.info("Gemini недоступен, ищу find_error в кэше для %s", tense_key)
+            logger.info("AI недоступен, ищу find_error в кэше для %s", tense_key)
             cached = get_cached_question(tense_key, user_id, qtype="find_error")
             if cached:
                 logger.info("Find_error взят из кэша")
@@ -284,7 +217,7 @@ def check_sentence(tense_key: str, user_sentence: str) -> dict | None:
     prompt = get_check_sentence_prompt(tense["name"], user_sentence)
 
     for attempt in range(2):
-        text = _generate(prompt, system=CHECK_SYSTEM, schema=CHECK_SCHEMA)
+        text = _generate(prompt, system=CHECK_SYSTEM, json_instruction=CHECK_JSON_INSTRUCTION)
         if text is None:
             return None
         data = _parse_json(text)
