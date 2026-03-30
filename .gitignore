@@ -28,3 +28,6 @@ Thumbs.db
 # SQLite WAL/SHM
 *.db-wal
 *.db-shm
+
+# Internal docs
+TODO.md

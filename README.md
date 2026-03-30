@@ -1,6 +1,6 @@
 # Tense Trainer Bot
 
-Telegram-бот для изучения английских времён с помощью AI (Gemini).
+Telegram-бот для изучения английских времён с помощью AI.
 Все вопросы генерируются нейросетью — каждый раз уникальные.
 
 ## Возможности
@@ -27,7 +27,7 @@ Telegram-бот для изучения английских времён с п�
 - Шпаргалка + 85 неправильных глаголов (4 группы: ABC, ABB, ABA, AAA)
 
 ### Надёжность
-- 5 моделей Gemini с автоматическим fallback при лимитах (429/503)
+- Мульти-модель fallback через OpenRouter (4 модели Gemini)
 - Кэш всех вопросов в БД — работает даже при недоступности API
 - Уведомления об ошибках прямо в Telegram (ADMIN_ID)
 - SQLite WAL mode для конкурентного доступа
@@ -35,9 +35,9 @@ Telegram-бот для изучения английских времён с п�
 
 ## Стек
 
-- Python 3.12+ (разработка на 3.14)
+- Python 3.12+
 - python-telegram-bot v22
-- Google Gemini API (google-genai)
+- OpenRouter API (Gemini models)
 - SQLite
 
 ## Установка
@@ -56,31 +56,31 @@ pip install -r requirements.txt
 
 ```env
 TELEGRAM_TOKEN=your_telegram_bot_token
-GEMINI_API_KEY=your_gemini_api_key
+OPENROUTER_API_KEY=your_openrouter_api_key
 ADMIN_ID=123456789
 ```
 
-`ADMIN_ID` — Telegram user_id администратора. Бот будет отправлять сюда уведомления об ошибках.
+`ADMIN_ID` — Telegram user_id администратора. Бот шлёт сюда уведомления об ошибках.
+`OPENROUTER_API_KEY` — ключ от [openrouter.ai](https://openrouter.ai)
 
-Для работы через прокси (опционально, только локальная разработка):
+Для локальной разработки через прокси (опционально):
 
 ```env
 HTTPS_PROXY=http://127.0.0.1:12334
+GEMINI_API_KEY=your_gemini_api_key
 ```
 
-## Запуск (локально)
+## Запуск
 
 ```bash
 python bot.py
 ```
 
-## Деплой (Render / Railway)
+## Деплой (Bothost)
 
-1. Запуши репо на GitHub
-2. Подключи репо к Render (Background Worker) или Railway
-3. Укажи переменные окружения: `TELEGRAM_TOKEN`, `GEMINI_API_KEY`, `ADMIN_ID`
-4. Прокси на хостинге **не нужен** — Telegram и Google API доступны напрямую
-5. Каждый `git push` в `main` = автоматический редеплой
+1. Подключи GitHub-репо к [bothost.ru](https://bothost.ru)
+2. Укажи переменные окружения: `TELEGRAM_TOKEN`, `OPENROUTER_API_KEY`, `ADMIN_ID`
+3. Каждый `git push` в `main` = автоматический редеплой
 
 ## Структура проекта
 
@@ -88,10 +88,14 @@ python bot.py
 bot.py                — точка входа, Application + handlers
 config.py             — переменные окружения
 handlers.py           — все обработчики (меню, квиз, обучение, daily, профиль)
-gemini_api.py         — Gemini API: генерация вопросов, проверка предложений
+gemini_api.py         — OpenRouter API: генерация вопросов, проверка предложений
 database.py           — SQLite: пользователи, результаты, кэш, Лейтнер
 tenses.py             — 12 времён (теория, формулы, маркеры, окончания)
 irregular_verbs.py    — 85 неправильных глаголов по группам
-prompts/              — промпты для Gemini (квиз, проверка, найди ошибку)
-TODO.md               — роадмап
+prompts/              — промпты для AI (квиз, проверка, найди ошибку)
+```
+
+## Админ-команды
+
+- `/db` — скачать БД (только для ADMIN_ID)
 ```
