@@ -80,25 +80,44 @@ def _build_menu_text_and_keyboard(user_id: int, name: str = "") -> tuple[str, li
     current, best = get_streak(user_id)
     leitner = get_leitner_progress(user_id)
     due = get_due_tenses(user_id)
+    stats = get_profile_stats(user_id)
 
-    # Шапка
+    is_new_user = stats["total_quizzes"] == 0
+
     lines = []
     if name:
-        lines.append(f"Привет, {name}! Я — <b>Tense Trainer Bot</b>.")
+        lines.append(f"Привет, {name}!")
     else:
-        lines.append("Привет! Я — <b>Tense Trainer Bot</b>.")
-    lines.append("Помогу выучить все 12 английских времён!\n")
+        lines.append("Привет!")
 
-    if current > 0:
-        lines.append(f"🔥 Streak: {current} дн.")
+    if is_new_user:
+        # Новый пользователь — краткая инструкция
+        lines.append("")
+        lines.append("Я — <b>Tense Trainer Bot</b> — помогу выучить")
+        lines.append("все 12 английских времён.")
+        lines.append("")
+        lines.append("С чего начать:")
+        lines.append("  📅 <b>Daily</b> — вопрос дня (1 мин.)")
+        lines.append("  ⚡ <b>Быстрая тренировка</b> — 5 вопросов (~3 мин.)")
+        lines.append("  🎓 <b>Обучение</b> — пошаговое изучение времён")
+    else:
+        # Вернувшийся пользователь — прогресс
+        if current > 0:
+            lines.append(f"🔥 Streak: {current} дн.")
 
-    # Прогресс обучения
-    if leitner:
-        mastered = sum(1 for v in leitner.values() if v["box"] == 5)
-        studied = len(leitner)
-        lines.append(f"📊 Изучено: {studied}/12 | ✅ Выучено: {mastered}")
-    if due:
-        lines.append(f"🔔 Пора повторить: {len(due)}")
+        if leitner:
+            mastered = sum(1 for v in leitner.values() if v["box"] == 5)
+            studied = len(leitner)
+            lines.append(f"📊 Изучено: {studied}/12 | ✅ Выучено: {mastered}")
+
+        if due:
+            lines.append(f"🔔 Пора повторить: {len(due)} времён")
+
+        # Подсказка что делать
+        if due:
+            lines.append("\n💡 Зайди в <b>Обучение</b> — есть повторение!")
+        elif not has_answered_daily(user_id, (get_today_daily() or {}).get("daily_id", -1)):
+            lines.append("\n💡 Ты ещё не решал <b>Daily</b> сегодня!")
 
     text = "\n".join(lines)
 
@@ -564,33 +583,48 @@ async def show_profile(query, context):
     else:
         rank = "📕 Мастер"
 
-    text = f"👤 <b>{name}</b>  {rank}\n\n"
+    text = f"👤 <b>{name}</b>  {rank}\n"
+    text += "─" * 20 + "\n\n"
 
-    # Основная статистика — компактно
-    text += f"🔥 Streak: {stats['current_streak']} дн. (лучший: {stats['best_streak']})\n"
+    # Streak
+    if stats["current_streak"] > 0 or stats["best_streak"] > 0:
+        text += f"🔥 <b>Streak:</b> {stats['current_streak']} дн."
+        if stats["best_streak"] > stats["current_streak"]:
+            text += f"  (рекорд: {stats['best_streak']})"
+        text += "\n"
+
+    # Тесты
     if stats["total_questions"] > 0:
-        text += f"📝 Тесты: {stats['total_correct']}/{stats['total_questions']} ({total_pct}%)\n"
+        text += f"📝 <b>Тесты:</b> {stats['total_correct']}/{stats['total_questions']} верно ({total_pct}%)\n"
     else:
-        text += "📝 Тестов пока нет\n"
+        text += "📝 <b>Тесты:</b> пока не решал\n"
 
+    # Предложения
     if stats["prod_total"] > 0:
         prod_pct = round(stats["prod_correct"] / stats["prod_total"] * 100)
-        text += f"✍️ Предложения: {stats['prod_correct']}/{stats['prod_total']} ({prod_pct}%)\n"
+        text += f"✍️ <b>Предложения:</b> {stats['prod_correct']}/{stats['prod_total']} ({prod_pct}%)\n"
 
     # Прогресс обучения (Лейтнер)
     leitner = get_leitner_progress(user_id)
     if leitner:
         mastered = sum(1 for v in leitner.values() if v["box"] == 5)
-        text += f"\n🎓 <b>Обучение:</b> {len(leitner)}/12 изучается, {mastered} выучено"
+        in_progress = len(leitner) - mastered
+        text += f"\n🎓 <b>Обучение:</b>\n"
+        text += f"  ✅ Выучено: {mastered}/12 времён\n"
+        if in_progress > 0:
+            text += f"  📖 В процессе: {in_progress}\n"
         if mastered == 12:
-            text += "\n🏆 Все 12 времён выучены!"
+            text += "  🏆 Все времена выучены!\n"
         elif mastered > 0:
             mastered_names = [TENSES[k]["name"] for k, v in leitner.items() if v["box"] == 5]
-            text += "\n✅ " + ", ".join(mastered_names)
+            text += "  " + ", ".join(mastered_names) + "\n"
+    else:
+        text += "\n🎓 <b>Обучение:</b> ещё не начато\n"
+        text += "  <i>Нажми «Обучение» в меню, чтобы начать</i>\n"
 
     # Статистика по временам — по группам
     if stats["tense_stats"]:
-        text += "\n\n📊 <b>Результаты по временам:</b>"
+        text += "\n📊 <b>Результаты по временам:</b>\n"
         for group_label, tense_keys in TENSE_GROUPS.items():
             group_title = {"present": "Present", "past": "Past", "future": "Future"}.get(group_label, group_label)
             group_lines = []
@@ -601,7 +635,7 @@ async def show_profile(query, context):
                     bar = "🟩" if ts["pct"] >= 70 else "🟨" if ts["pct"] >= 40 else "🟥"
                     group_lines.append(f"  {bar} {tense_name}: {ts['pct']}%")
             if group_lines:
-                text += f"\n<b>{group_title}:</b>\n" + "\n".join(group_lines)
+                text += f"\n<b>{group_title}:</b>\n" + "\n".join(group_lines) + "\n"
 
     keyboard = [
         [InlineKeyboardButton("🏆 Рейтинг", callback_data="leaderboard")],
@@ -964,21 +998,10 @@ async def handle_daily_answer(query, context, answer_index: int):
     user_id = query.from_user.id
     username = query.from_user.username or query.from_user.first_name or ""
 
-    # Если контекст потерян (перезапуск/conflict) — восстанавливаем из БД
+    # Если контекст потерян (перезапуск/conflict) — заново показываем daily
     if not options or not daily_id:
-        daily = get_today_daily()
-        if daily:
-            daily_id = daily["daily_id"]
-            correct = daily["correct"]
-            explanation = daily.get("explanation_ru", "")
-            tense_key = daily["tense_key"]
-            options = daily["options"][:]
-        else:
-            await query.edit_message_text(
-                "😔 Вопрос дня не найден. Попробуй ещё раз.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 В меню", callback_data="main_menu")]]),
-            )
-            return
+        await show_daily(query, context)
+        return
 
     if answer_index >= len(options):
         return

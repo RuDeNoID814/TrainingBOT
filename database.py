@@ -2,17 +2,10 @@ import os
 import sqlite3
 from datetime import date, timedelta, datetime, timezone
 
-# Persistent storage: проверяем все варианты Bothost
-# 1. SHARED_DIR (переменная от Bothost при включённом хранилище)
-# 2. /app/shared (стандартный путь общего хранилища)
-# 3. DB_PATH (ручная настройка)
-# 4. bot.db (локальная разработка)
-_db_path_resolved = None
-for _candidate in (os.getenv("SHARED_DIR", ""), "/app/shared"):
-    if _candidate and os.path.isdir(_candidate):
-        _db_path_resolved = os.path.join(_candidate, "bot.db")
-        break
-DB_PATH = _db_path_resolved or os.getenv("DB_PATH", "bot.db")
+# БД хранится в data/ — эта папка в git, можно скачать через /db и запушить обратно
+_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+os.makedirs(_DATA_DIR, exist_ok=True)
+DB_PATH = os.path.join(_DATA_DIR, "bot.db")
 
 # Московское время (UTC+3), учебный день начинается в 7:00
 MSK = timezone(timedelta(hours=3))
