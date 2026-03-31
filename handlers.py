@@ -720,14 +720,15 @@ async def show_profile(query, context):
 
     total_pct = round(stats["total_correct"] / stats["total_questions"] * 100) if stats["total_questions"] > 0 else 0
 
-    # Ранг
-    if stats["total_quizzes"] == 0:
+    # Ранг (учитываем и процент, и количество решённых вопросов)
+    q = stats["total_questions"]
+    if q == 0:
         rank = "🌱 Новичок"
-    elif total_pct < 50:
+    elif q < 10 or total_pct < 50:
         rank = "📗 Начинающий"
-    elif total_pct < 75:
+    elif q < 30 or total_pct < 75:
         rank = "📘 Средний"
-    elif total_pct < 90:
+    elif q < 60 or total_pct < 90:
         rank = "📙 Продвинутый"
     else:
         rank = "📕 Мастер"
