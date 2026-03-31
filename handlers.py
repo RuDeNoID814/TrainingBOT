@@ -17,6 +17,7 @@ from database import (
     get_leitner_progress, init_leitner, update_leitner_session,
     get_due_tenses, get_leitner_stats,
     save_quiz_session, load_quiz_session, delete_quiz_session,
+    set_display_name, get_display_name, clear_user_stats,
 )
 
 # Московское время (UTC+3), день начинается в 7:00
@@ -619,6 +620,41 @@ async def start_production(query, context, tense_key: str):
 
 
 async def handle_user_sentence(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Ввод никнейма
+    if context.user_data.get("awaiting_nickname"):
+        context.user_data["awaiting_nickname"] = False
+        text = update.message.text.strip()
+        user_id = update.effective_user.id
+
+        if text.lower() in ("сброс", "reset", "удалить"):
+            set_display_name(user_id, "")
+            await update.message.reply_text(
+                "✅ Никнейм сброшен. В рейтинге будет @username.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("👤 Профиль", callback_data="profile")],
+                    [InlineKeyboardButton("⬅️ В меню", callback_data="main_menu")],
+                ]),
+            )
+        elif len(text) > 20:
+            await update.message.reply_text(
+                "❌ Слишком длинный — максимум 20 символов. Попробуй ещё:",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅️ Отмена", callback_data="profile")],
+                ]),
+            )
+            context.user_data["awaiting_nickname"] = True
+        else:
+            set_display_name(user_id, text)
+            await update.message.reply_text(
+                f"✅ Никнейм установлен: <b>{text}</b>",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("👤 Профиль", callback_data="profile")],
+                    [InlineKeyboardButton("⬅️ В меню", callback_data="main_menu")],
+                ]),
+                parse_mode="HTML",
+            )
+        return
+
     # Сначала проверяем мини-задание обучения
     if context.user_data.get("awaiting_learn_sentence"):
         await handle_learn_sentence(update, context)
@@ -749,8 +785,14 @@ async def show_profile(query, context):
             if group_lines:
                 text += f"\n<b>{group_title}:</b>\n" + "\n".join(group_lines) + "\n"
 
+    # Показываем текущий ник если есть
+    dn = get_display_name(user_id)
+    if dn:
+        text += f"\n🏷 <b>Ник в рейтинге:</b> {dn}\n"
+
     keyboard = [
         [InlineKeyboardButton("🏆 Рейтинг", callback_data="leaderboard")],
+        [InlineKeyboardButton("⚙️ Настройки", callback_data="settings")],
         [InlineKeyboardButton("⬅️ В меню", callback_data="main_menu")],
     ]
     await _safe_edit(query, text, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -1843,6 +1885,57 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_irreg_verbs_group(query, group_key, page)
         else:
             await show_irreg_verbs_menu(query)
+
+    elif data == "settings":
+        dn = get_display_name(query.from_user.id)
+        nick_text = f"Текущий ник: <b>{dn}</b>" if dn else "Ник не задан (используется @username)"
+        await query.edit_message_text(
+            f"⚙️ <b>Настройки</b>\n\n🏷 {nick_text}",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏷 Сменить ник", callback_data="set_nickname")],
+                [InlineKeyboardButton("🗑 Сбросить статистику", callback_data="reset_stats_confirm")],
+                [InlineKeyboardButton("⬅️ Назад", callback_data="profile")],
+            ]),
+            parse_mode="HTML",
+        )
+
+    elif data == "set_nickname":
+        context.user_data["awaiting_nickname"] = True
+        await query.edit_message_text(
+            "🏷 <b>Введи новый никнейм</b>\n\n"
+            "Он будет отображаться в рейтинге вместо твоего @username.\n"
+            "Отправь текстом (до 20 символов).\n\n"
+            "Чтобы вернуть @username — отправь <code>сброс</code>",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Отмена", callback_data="settings")],
+            ]),
+            parse_mode="HTML",
+        )
+
+    elif data == "reset_stats_confirm":
+        await query.edit_message_text(
+            "⚠️ <b>Точно сбросить статистику?</b>\n\n"
+            "Будут удалены:\n"
+            "• Результаты тестов и streak\n"
+            "• Прогресс обучения (Лейтнер)\n"
+            "• Ответы на Daily\n\n"
+            "❗ Кэш вопросов и Daily-вопросы <b>сохранятся</b>.\n"
+            "Никнейм тоже сохранится.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🗑 Да, сбросить", callback_data="reset_stats_yes")],
+                [InlineKeyboardButton("⬅️ Отмена", callback_data="settings")],
+            ]),
+            parse_mode="HTML",
+        )
+
+    elif data == "reset_stats_yes":
+        clear_user_stats(query.from_user.id)
+        await query.edit_message_text(
+            "✅ Статистика сброшена. Начинаем с чистого листа!",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ В меню", callback_data="main_menu")],
+            ]),
+        )
 
     elif data == "info":
         await show_info(query, context)

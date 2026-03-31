@@ -32,6 +32,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
                 username TEXT DEFAULT '',
+                display_name TEXT DEFAULT '',
                 current_streak INTEGER DEFAULT 0,
                 best_streak INTEGER DEFAULT 0,
                 last_practice_date TEXT DEFAULT NULL
@@ -126,14 +127,15 @@ def init_db():
             )
         """)
         # Миграции для существующих таблиц
-        try:
-            conn.execute("ALTER TABLE users ADD COLUMN username TEXT DEFAULT ''")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            conn.execute("ALTER TABLE question_cache ADD COLUMN qtype TEXT DEFAULT 'quiz'")
-        except sqlite3.OperationalError:
-            pass
+        for col, table, default in [
+            ("username", "users", "''"),
+            ("display_name", "users", "''"),
+            ("qtype", "question_cache", "'quiz'"),
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT DEFAULT {default}")
+            except sqlite3.OperationalError:
+                pass
         conn.commit()
 
 
@@ -534,12 +536,19 @@ def get_profile_stats(user_id: int) -> dict:
 
 # ── Leaderboard ───────────────────────────────────────
 
+def _display(username: str, display_name: str, user_id: int) -> str:
+    """Возвращает имя для рейтинга: display_name > username > User ID."""
+    if display_name:
+        return display_name
+    return username or f"User {user_id}"
+
+
 def get_leaderboard_by_group(tense_keys: list[str], limit: int = 10) -> list[dict]:
     """Рейтинг по группе времён (Present/Past/Future)."""
     placeholders = ",".join("?" * len(tense_keys))
     with _connect() as conn:
         rows = conn.execute(f"""
-            SELECT u.user_id, u.username, u.best_streak,
+            SELECT u.user_id, u.username, COALESCE(u.display_name, '') as dn, u.best_streak,
                    COALESCE(SUM(q.score), 0) as total_correct,
                    COALESCE(SUM(q.total), 0) as total_questions
             FROM users u
@@ -552,11 +561,11 @@ def get_leaderboard_by_group(tense_keys: list[str], limit: int = 10) -> list[dic
 
     result = []
     for row in rows:
-        user_id, username, best_streak, correct, total = row
+        user_id, username, dn, best_streak, correct, total = row
         pct = round(correct / total * 100) if total > 0 else 0
         result.append({
             "user_id": user_id,
-            "username": username or f"User {user_id}",
+            "username": _display(username, dn, user_id),
             "best_streak": best_streak,
             "correct": correct,
             "total": total,
@@ -568,7 +577,8 @@ def get_leaderboard_by_group(tense_keys: list[str], limit: int = 10) -> list[dic
 def get_leaderboard(limit: int = 10) -> list[dict]:
     with _connect() as conn:
         rows = conn.execute("""
-            SELECT u.user_id, u.username, u.current_streak, u.best_streak,
+            SELECT u.user_id, u.username, COALESCE(u.display_name, '') as dn,
+                   u.current_streak, u.best_streak,
                    COALESCE(SUM(q.score), 0) as total_correct,
                    COALESCE(SUM(q.total), 0) as total_questions
             FROM users u
@@ -581,11 +591,11 @@ def get_leaderboard(limit: int = 10) -> list[dict]:
 
     result = []
     for row in rows:
-        user_id, username, current_streak, best_streak, correct, total = row
+        user_id, username, dn, current_streak, best_streak, correct, total = row
         pct = round(correct / total * 100) if total > 0 else 0
         result.append({
             "user_id": user_id,
-            "username": username or f"User {user_id}",
+            "username": _display(username, dn, user_id),
             "current_streak": current_streak,
             "best_streak": best_streak,
             "correct": correct,
@@ -654,4 +664,51 @@ def delete_quiz_session(user_id: int):
     """Удаляет сессию квиза после завершения."""
     with _connect() as conn:
         conn.execute("DELETE FROM quiz_sessions WHERE user_id = ?", (user_id,))
+        conn.commit()
+
+
+# ── Никнейм ──────────────────────────────────────────
+
+def set_display_name(user_id: int, name: str):
+    """Устанавливает отображаемое имя (никнейм) для рейтинга."""
+    with _connect() as conn:
+        conn.execute("UPDATE users SET display_name = ? WHERE user_id = ?", (name.strip(), user_id))
+        conn.commit()
+
+
+def get_display_name(user_id: int) -> str:
+    """Возвращает display_name или пустую строку."""
+    with _connect() as conn:
+        row = conn.execute("SELECT display_name FROM users WHERE user_id = ?", (user_id,)).fetchone()
+    return (row[0] or "") if row else ""
+
+
+# ── Очистка статистики ───────────────────────────────
+
+def clear_user_stats(user_id: int):
+    """Сбрасывает статистику пользователя, сохраняя question_cache и daily_questions."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM quiz_results WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM production_results WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM daily_answers WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM leitner_progress WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM user_seen_questions WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM quiz_sessions WHERE user_id = ?", (user_id,))
+        conn.execute(
+            "UPDATE users SET current_streak = 0, best_streak = 0, last_practice_date = NULL WHERE user_id = ?",
+            (user_id,),
+        )
+        conn.commit()
+
+
+def clear_all_stats():
+    """Сбрасывает статистику ВСЕХ пользователей, сохраняя question_cache и daily_questions."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM quiz_results")
+        conn.execute("DELETE FROM production_results")
+        conn.execute("DELETE FROM daily_answers")
+        conn.execute("DELETE FROM leitner_progress")
+        conn.execute("DELETE FROM user_seen_questions")
+        conn.execute("DELETE FROM quiz_sessions")
+        conn.execute("UPDATE users SET current_streak = 0, best_streak = 0, last_practice_date = NULL")
         conn.commit()

@@ -121,9 +121,18 @@ def main():
             init_db()
             await update.message.reply_text("БД не существовала, создана новая.")
 
+    # Админ-команда: очистить статистику всех (сохранить вопросы)
+    async def clear_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.effective_user.id != ADMIN_ID:
+            return
+        from database import clear_all_stats
+        clear_all_stats()
+        await update.message.reply_text("📊 Статистика всех пользователей сброшена.\nКэш вопросов и Daily сохранены.")
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("db", download_db))
     app.add_handler(CommandHandler("reset_db", reset_db))
+    app.add_handler(CommandHandler("clear_stats", clear_stats))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_sentence))
     app.add_error_handler(error_handler)
