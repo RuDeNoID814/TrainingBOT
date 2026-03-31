@@ -1347,7 +1347,10 @@ async def start_learn_quiz(query, context, tense_key: str):
 
 
 async def send_learn_question(query, context):
-    q_num = context.user_data["learn_q_num"]
+    q_num = context.user_data.get("learn_q_num")
+    if q_num is None:
+        await show_learn_menu(query, context)
+        return
     is_final = context.user_data.get("learn_is_final", False)
     total = FINAL_TEST_QUESTIONS if is_final else LEARN_QUESTIONS
 
@@ -1358,7 +1361,10 @@ async def send_learn_question(query, context):
             await show_learn_results(query, context)
         return
 
-    tense_key = context.user_data["learn_tense"]
+    tense_key = context.user_data.get("learn_tense")
+    if not tense_key:
+        await show_learn_menu(query, context)
+        return
     user_id = query.from_user.id
     mode_label = "🏅 Финальный тест" if is_final else "🎓 Обучение"
 

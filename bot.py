@@ -95,7 +95,7 @@ def main():
 
     # Единая админ-команда /bd
     async def admin_bd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.effective_user.id != ADMIN_ID:
+        if not ADMIN_ID or update.effective_user.id != ADMIN_ID:
             return
         from database import DB_PATH, clear_all_stats
 
