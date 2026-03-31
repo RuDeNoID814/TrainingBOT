@@ -262,6 +262,20 @@ async def start_random_quiz(query, context):
     await send_question(query, context)
 
 
+async def show_quick_info(query, context):
+    """Экран описания быстрой тренировки."""
+    text = (
+        "⚡ <b>Быстрая тренировка</b>\n\n"
+        "5 вопросов из случайных времён.\n"
+        "Займёт ~3 минуты. Проверь свои знания!"
+    )
+    keyboard = [
+        [InlineKeyboardButton("🎯 Начать", callback_data="quick_start")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="main_menu")],
+    ]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+
+
 async def start_quick_training(query, context):
     """Быстрая тренировка — 5 случайных вопросов из разных времён."""
     all_tenses = list(TENSES.keys())
@@ -379,9 +393,21 @@ async def handle_answer(query, context, answer_index: int):
 async def show_results(query, context):
     score = context.user_data.get("score", 0)
     total_q = _get_total_questions(context)
-    answered = context.user_data.get("question_num", total_q)
+    answered = context.user_data.get("question_num", 0)
     user_id = query.from_user.id
     username = query.from_user.username or query.from_user.first_name or ""
+
+    # Защита: если нет данных (контекст потерян) — не сохраняем мусор
+    if answered == 0:
+        await query.edit_message_text(
+            "⚠️ Данные теста потерялись (бот перезапускался).\n"
+            "Результат не сохранён. Попробуй ещё раз!",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 В меню", callback_data="main_menu")],
+            ]),
+        )
+        return
+
     current, best = update_streak(user_id, username)
 
     # Сохраняем результаты по реальным временам (не "random")
@@ -440,6 +466,17 @@ async def confirm_finish(query, context):
     score = context.user_data.get("score", 0)
     q_num = context.user_data.get("question_num", 0)
     total_questions = _get_total_questions(context)
+
+    # Защита от потери контекста
+    if q_num == 0 and score == 0:
+        await query.edit_message_text(
+            "⚠️ Данные теста потерялись (бот перезапускался).\n"
+            "Начни тест заново.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 В меню", callback_data="main_menu")],
+            ]),
+        )
+        return
 
     text = (
         f"Ты ответил на {q_num} из {total_questions} вопросов.\n"
@@ -1542,6 +1579,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_main_menu(query, context)
 
     elif data == "quick":
+        await show_quick_info(query, context)
+
+    elif data == "quick_start":
         await start_quick_training(query, context)
 
     elif data == "practice":
