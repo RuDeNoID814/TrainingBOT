@@ -16,6 +16,7 @@ from database import (
     save_daily_answer,
     get_leitner_progress, init_leitner, update_leitner_session,
     get_due_tenses, get_leitner_stats,
+    save_quiz_session, load_quiz_session, delete_quiz_session,
 )
 
 # Московское время (UTC+3), день начинается в 7:00
@@ -41,6 +42,41 @@ def _is_new_day_streak(context) -> bool:
     return True
 
 logger = logging.getLogger(__name__)
+
+
+def _sync_quiz_to_db(user_id: int, context):
+    """Сохраняет текущее состояние квиза из context в БД."""
+    mode = context.user_data.get("current_tense", "")
+    if not mode:
+        return
+    save_quiz_session(user_id, {
+        "mode": mode,
+        "tense_order": context.user_data.get("random_tense_order", []),
+        "question_num": context.user_data.get("question_num", 0),
+        "score": context.user_data.get("score", 0),
+        "question_tenses": context.user_data.get("question_tenses", []),
+        "question_correct": context.user_data.get("question_correct", []),
+        "current_correct": context.user_data.get("correct_answer", ""),
+        "current_options": context.user_data.get("shuffled_options", []),
+        "current_explanation": context.user_data.get("explanation_ru", ""),
+    })
+
+
+def _restore_quiz_from_db(user_id: int, context) -> bool:
+    """Восстанавливает состояние квиза из БД в context. Возвращает True если удалось."""
+    session = load_quiz_session(user_id)
+    if session is None:
+        return False
+    context.user_data["current_tense"] = session["mode"]
+    context.user_data["random_tense_order"] = session["tense_order"]
+    context.user_data["question_num"] = session["question_num"]
+    context.user_data["score"] = session["score"]
+    context.user_data["question_tenses"] = session["question_tenses"]
+    context.user_data["question_correct"] = session["question_correct"]
+    context.user_data["correct_answer"] = session["current_correct"]
+    context.user_data["shuffled_options"] = session["current_options"]
+    context.user_data["explanation_ru"] = session["current_explanation"]
+    return True
 
 MAX_TG_MSG = 4096  # Лимит Telegram на длину сообщения
 
@@ -232,6 +268,7 @@ async def start_quiz(query, context, tense_key: str):
     context.user_data["question_num"] = 0
     context.user_data["question_tenses"] = []
     context.user_data["question_correct"] = []
+    _sync_quiz_to_db(query.from_user.id, context)
     await send_question(query, context)
 
 
@@ -259,6 +296,7 @@ async def start_random_quiz(query, context):
     context.user_data["question_num"] = 0
     context.user_data["question_tenses"] = []
     context.user_data["question_correct"] = []
+    _sync_quiz_to_db(query.from_user.id, context)
     await send_question(query, context)
 
 
@@ -286,6 +324,7 @@ async def start_quick_training(query, context):
     context.user_data["question_num"] = 0
     context.user_data["question_tenses"] = []
     context.user_data["question_correct"] = []
+    _sync_quiz_to_db(query.from_user.id, context)
     await send_question(query, context)
 
 
@@ -300,6 +339,17 @@ def _get_total_questions(context) -> int:
 
 
 async def send_question(query, context):
+    # Восстанавливаем из БД если контекст потерян
+    if "current_tense" not in context.user_data:
+        if not _restore_quiz_from_db(query.from_user.id, context):
+            await query.edit_message_text(
+                "⚠️ Сессия не найдена. Начни тест заново.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🏠 В меню", callback_data="main_menu")],
+                ]),
+            )
+            return
+
     q_num = context.user_data["question_num"]
     is_random = context.user_data["current_tense"] in ("random", "quick")
     total_questions = _get_total_questions(context)
@@ -337,6 +387,9 @@ async def send_question(query, context):
     context.user_data["shuffled_options"] = options
     context.user_data["explanation_ru"] = data["explanation_ru"]
 
+    # Сохраняем состояние в БД (переживёт перезапуск)
+    _sync_quiz_to_db(query.from_user.id, context)
+
     keyboard = []
     for i, opt in enumerate(options):
         keyboard.append([InlineKeyboardButton(opt, callback_data=f"answer_{i}")])
@@ -353,6 +406,21 @@ async def handle_answer(query, context, answer_index: int):
     options = context.user_data.get("shuffled_options", [])
     correct = context.user_data.get("correct_answer", "")
     explanation = context.user_data.get("explanation_ru", "")
+
+    # Восстанавливаем из БД если контекст потерян
+    if not options or not correct:
+        if _restore_quiz_from_db(query.from_user.id, context):
+            options = context.user_data.get("shuffled_options", [])
+            correct = context.user_data.get("correct_answer", "")
+            explanation = context.user_data.get("explanation_ru", "")
+        else:
+            await query.edit_message_text(
+                "⚠️ Сессия не найдена. Начни тест заново.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🏠 В меню", callback_data="main_menu")],
+                ]),
+            )
+            return
 
     if answer_index >= len(options):
         return
@@ -378,6 +446,9 @@ async def handle_answer(query, context, answer_index: int):
             f"💡 {explanation_fmt}"
         )
 
+    # Сохраняем прогресс в БД после каждого ответа
+    _sync_quiz_to_db(query.from_user.id, context)
+
     if is_last:
         keyboard = [[InlineKeyboardButton("📊 Результаты", callback_data="next_question")]]
     else:
@@ -392,16 +463,20 @@ async def handle_answer(query, context, answer_index: int):
 
 async def show_results(query, context):
     score = context.user_data.get("score", 0)
-    total_q = _get_total_questions(context)
     answered = context.user_data.get("question_num", 0)
     user_id = query.from_user.id
     username = query.from_user.username or query.from_user.first_name or ""
 
-    # Защита: если нет данных (контекст потерян) — не сохраняем мусор
+    # Восстанавливаем из БД если контекст потерян
+    if answered == 0:
+        if _restore_quiz_from_db(user_id, context):
+            score = context.user_data.get("score", 0)
+            answered = context.user_data.get("question_num", 0)
+
+    # Если всё равно нет данных — сообщаем
     if answered == 0:
         await query.edit_message_text(
-            "⚠️ Данные теста потерялись (бот перезапускался).\n"
-            "Результат не сохранён. Попробуй ещё раз!",
+            "⚠️ Данные теста не найдены. Начни заново.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🏠 В меню", callback_data="main_menu")],
             ]),
@@ -453,6 +528,9 @@ async def show_results(query, context):
     if _is_new_day_streak(context):
         text += f"\n\n🔥 Streak: {current} дн.!"
 
+    # Квиз завершён — удаляем сессию из БД
+    delete_quiz_session(user_id)
+
     keyboard = [
         [InlineKeyboardButton("🔄 Ещё раз", callback_data="try_again")],
         [InlineKeyboardButton("🏠 В меню", callback_data="main_menu")],
@@ -465,18 +543,14 @@ async def show_results(query, context):
 async def confirm_finish(query, context):
     score = context.user_data.get("score", 0)
     q_num = context.user_data.get("question_num", 0)
-    total_questions = _get_total_questions(context)
 
-    # Защита от потери контекста
+    # Восстанавливаем из БД если контекст потерян
     if q_num == 0 and score == 0:
-        await query.edit_message_text(
-            "⚠️ Данные теста потерялись (бот перезапускался).\n"
-            "Начни тест заново.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🏠 В меню", callback_data="main_menu")],
-            ]),
-        )
-        return
+        if _restore_quiz_from_db(query.from_user.id, context):
+            score = context.user_data.get("score", 0)
+            q_num = context.user_data.get("question_num", 0)
+
+    total_questions = _get_total_questions(context)
 
     text = (
         f"Ты ответил на {q_num} из {total_questions} вопросов.\n"
@@ -498,6 +572,7 @@ async def finish_save(query, context):
 
 async def finish_reset(query, context):
     """Сбрасывает результат и возвращает в меню."""
+    delete_quiz_session(query.from_user.id)
     context.user_data.pop("score", None)
     context.user_data.pop("question_num", None)
     context.user_data.pop("current_tense", None)

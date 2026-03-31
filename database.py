@@ -110,6 +110,21 @@ def init_db():
                 PRIMARY KEY (user_id, tense_key)
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS quiz_sessions (
+                user_id INTEGER PRIMARY KEY,
+                mode TEXT NOT NULL,
+                tense_order TEXT DEFAULT '[]',
+                question_num INTEGER DEFAULT 0,
+                score INTEGER DEFAULT 0,
+                question_tenses TEXT DEFAULT '[]',
+                question_correct TEXT DEFAULT '[]',
+                current_correct TEXT DEFAULT '',
+                current_options TEXT DEFAULT '[]',
+                current_explanation TEXT DEFAULT '',
+                updated_at TEXT NOT NULL
+            )
+        """)
         # Миграции для существующих таблиц
         try:
             conn.execute("ALTER TABLE users ADD COLUMN username TEXT DEFAULT ''")
@@ -578,3 +593,65 @@ def get_leaderboard(limit: int = 10) -> list[dict]:
             "pct": pct,
         })
     return result
+
+
+# ── Quiz Sessions (персистентное состояние квиза) ────
+
+def save_quiz_session(user_id: int, data: dict):
+    """Сохраняет/обновляет активную сессию квиза в БД."""
+    import json
+    now = datetime.now(MSK).isoformat()
+    with _connect() as conn:
+        conn.execute("""
+            INSERT OR REPLACE INTO quiz_sessions
+            (user_id, mode, tense_order, question_num, score,
+             question_tenses, question_correct,
+             current_correct, current_options, current_explanation, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            user_id,
+            data.get("mode", ""),
+            json.dumps(data.get("tense_order", [])),
+            data.get("question_num", 0),
+            data.get("score", 0),
+            json.dumps(data.get("question_tenses", [])),
+            json.dumps(data.get("question_correct", [])),
+            data.get("current_correct", ""),
+            json.dumps(data.get("current_options", [])),
+            data.get("current_explanation", ""),
+            now,
+        ))
+        conn.commit()
+
+
+def load_quiz_session(user_id: int) -> dict | None:
+    """Загружает активную сессию квиза из БД."""
+    import json
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT mode, tense_order, question_num, score, "
+            "question_tenses, question_correct, "
+            "current_correct, current_options, current_explanation "
+            "FROM quiz_sessions WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "mode": row[0],
+        "tense_order": json.loads(row[1]),
+        "question_num": row[2],
+        "score": row[3],
+        "question_tenses": json.loads(row[4]),
+        "question_correct": json.loads(row[5]),
+        "current_correct": row[6],
+        "current_options": json.loads(row[7]),
+        "current_explanation": row[8],
+    }
+
+
+def delete_quiz_session(user_id: int):
+    """Удаляет сессию квиза после завершения."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM quiz_sessions WHERE user_id = ?", (user_id,))
+        conn.commit()
