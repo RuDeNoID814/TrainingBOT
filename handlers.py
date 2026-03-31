@@ -137,6 +137,7 @@ def _build_menu_text_and_keyboard(user_id: int, name: str = "") -> tuple[str, li
         lines.append("  📅 <b>Daily</b> — вопрос дня (1 мин.)")
         lines.append("  ⚡ <b>Быстрая тренировка</b> — 5 вопросов (~3 мин.)")
         lines.append("  🎓 <b>Обучение</b> — пошаговое изучение времён")
+        lines.append("  📚 <b>Практика</b> — тесты, найди ошибку, напиши предложение")
     else:
         # Вернувшийся пользователь — прогресс
         if current > 0:
@@ -1919,8 +1920,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• Результаты тестов и streak\n"
             "• Прогресс обучения (Лейтнер)\n"
             "• Ответы на Daily\n\n"
-            "❗ Кэш вопросов и Daily-вопросы <b>сохранятся</b>.\n"
-            "Никнейм тоже сохранится.",
+            "Это действие нельзя отменить.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🗑 Да, сбросить", callback_data="reset_stats_yes")],
                 [InlineKeyboardButton("⬅️ Отмена", callback_data="settings")],

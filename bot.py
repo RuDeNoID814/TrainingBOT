@@ -93,46 +93,51 @@ def main():
             except Exception:
                 logger.error("Не удалось отправить ошибку админу")
 
-    # Админ-команда: скачать БД
-    async def download_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Единая админ-команда /bd
+    async def admin_bd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.effective_user.id != ADMIN_ID:
             return
-        from database import DB_PATH
-        if os.path.exists(DB_PATH):
-            await update.message.reply_document(document=open(DB_PATH, "rb"), filename="bot.db")
-        else:
-            await update.message.reply_text("БД не найдена")
+        from database import DB_PATH, clear_all_stats
 
-    # Админ-команда: сбросить БД
-    async def reset_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.effective_user.id != ADMIN_ID:
-            return
-        from database import DB_PATH
-        if os.path.exists(DB_PATH):
-            os.remove(DB_PATH)
-            # Удаляем WAL/SHM файлы если есть
-            for ext in ("-wal", "-shm"):
-                p = DB_PATH + ext
-                if os.path.exists(p):
-                    os.remove(p)
-            init_db()
-            await update.message.reply_text("🗑 БД очищена и пересоздана.")
-        else:
-            init_db()
-            await update.message.reply_text("БД не существовала, создана новая.")
+        args = context.args[0] if context.args else ""
 
-    # Админ-команда: очистить статистику всех (сохранить вопросы)
-    async def clear_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.effective_user.id != ADMIN_ID:
-            return
-        from database import clear_all_stats
-        clear_all_stats()
-        await update.message.reply_text("📊 Статистика всех пользователей сброшена.\nКэш вопросов и Daily сохранены.")
+        if args == "download":
+            if os.path.exists(DB_PATH):
+                await update.message.reply_document(document=open(DB_PATH, "rb"), filename="bot.db")
+            else:
+                await update.message.reply_text("БД не найдена")
+
+        elif args == "reset":
+            if os.path.exists(DB_PATH):
+                os.remove(DB_PATH)
+                for ext in ("-wal", "-shm"):
+                    p = DB_PATH + ext
+                    if os.path.exists(p):
+                        os.remove(p)
+            init_db()
+            await update.message.reply_text("🗑 БД полностью сброшена и пересоздана.")
+
+        elif args == "clear":
+            clear_all_stats()
+            await update.message.reply_text("📊 Статистика сброшена. Вопросы сохранены.")
+
+        elif args == "path":
+            exists = os.path.exists(DB_PATH)
+            size = os.path.getsize(DB_PATH) if exists else 0
+            await update.message.reply_text(f"📂 Путь: <code>{DB_PATH}</code>\nСуществует: {exists}\nРазмер: {size} байт", parse_mode="HTML")
+
+        else:
+            await update.message.reply_text(
+                "🛠 <b>Команды БД:</b>\n\n"
+                "/bd download — скачать БД\n"
+                "/bd clear — сброс статистики (вопросы останутся)\n"
+                "/bd reset — полный сброс БД\n"
+                "/bd path — путь и размер БД",
+                parse_mode="HTML",
+            )
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("db", download_db))
-    app.add_handler(CommandHandler("reset_db", reset_db))
-    app.add_handler(CommandHandler("clear_stats", clear_stats))
+    app.add_handler(CommandHandler("bd", admin_bd))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_sentence))
     app.add_error_handler(error_handler)
